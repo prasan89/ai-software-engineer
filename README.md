@@ -43,9 +43,9 @@ Open `http://localhost:8000`. The Spring Boot NPE fixture is pre-loaded.
 | Step | Action | What to watch |
 |---|---|---|
 | 1 | Click **Start Run** | 7 pipeline stages execute in real time |
-| 2 | Wait ~30 s | Diff appears: `if (divisor == null) throw IAE` |
+| 2 | Wait ~35 s | Diff appears: `if (divisor == null) throw IAE` |
 | 3 | See **Test Results** | 6 Maven tests pass inside Docker |
-| 4 | Check **LLM Usage** | 2 calls, ~$0.014 total cost |
+| 4 | Check **LLM Usage** | 2 calls, ~$0.021 total cost |
 | 5 | Click **Repeat Issue** | Fix reused from store — 0 LLM calls, $0.000 |
 | 6 | Check **Engineering Memory** | Cache MISS → HIT transition shown |
 
@@ -60,7 +60,7 @@ identical issue, zero provider calls, identical verified outcome.
 
 Expected output:
 ```
-SCENARIO A: success=True  llm_calls=2  tests_run=6  cost=$0.014
+SCENARIO A: success=True  llm_calls=2  tests_run=6  cost=$0.021
 SCENARIO B: success=True  llm_calls=0  fix_reused=YES  cost=$0.000
 SCENARIO C: success=True  llm_calls=2  stale cache rejected
 ```
@@ -83,7 +83,7 @@ SCENARIO C: success=True  llm_calls=2  stale cache rejected
 | `demo.sh` | Complete — single-command server + e2e launcher |
 
 **Verified results (2026-10-26):**
-- Scenario A: `success=True`, 6/6 Docker tests pass, ~$0.014
+- Scenario A: `success=True`, 6/6 Docker tests pass, ~$0.021 (2 LLM calls, 37s)
 - Scenario B: fix reused, 0 LLM calls, $0.000 — **100% cost saving on repeat**
 - Scenario C: stale cache correctly invalidated, fresh analysis runs
 
@@ -217,11 +217,12 @@ No fallback to host execution.
 
 ## Provider notes
 
-**Primary:** Meta Model API (`https://api.llama.com/v1/`)
+**Primary:** Meta Model API (`https://api.meta.ai/v1`)
 
 | Model | Cached $/1M | Input $/1M | Output $/1M | Use |
 |---|---|---|---|---|
-| `muse-spark-1.3-contributor` | $0.002 | $0.10 | $0.20 | Default (diagnosis + test gen) |
+| `muse-spark-1.3` | $0.15 | $1.25 | $4.25 | Default (diagnosis + test gen) |
+| `muse-spark-1.3-contributor` | $0.002 | $0.10 | $0.20 | Hackathon contributor tier |
 | `muse-wonder-1.0` | $0.20 | $4.00 | $20.00 | Complex repos (future) |
 
 `muse-spark-1.3` uses ~148–2000 internal reasoning tokens per request.

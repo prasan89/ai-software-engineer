@@ -43,7 +43,7 @@ directly; it drives the workflow through the orchestrator interface.
 ## LLM Providers
 
 The primary provider is **Meta's official Model API** (Llama family, endpoint
-`https://api.llama.com/v1/`). A provider-neutral interface (`agent/providers/base.py`)
+`https://api.meta.ai/v1`). A provider-neutral interface (`agent/providers/base.py`)
 allows Anthropic Claude and other providers to be added as optional fallbacks.
 
 Rules:
