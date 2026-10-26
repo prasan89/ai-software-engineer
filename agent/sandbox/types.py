@@ -28,6 +28,10 @@ class SandboxResult:
     elapsed_seconds: float
     timed_out: bool = False
     oom_killed: bool = False
+    # Set when the sandbox itself could not run (Docker unavailable, path error,
+    # etc.). When True, the exit_code and test counts are meaningless.
+    sandbox_error: bool = False
+    sandbox_error_message: str = ""
     tests_run: int = 0
     tests_failed: int = 0
     tests_errors: int = 0
@@ -35,7 +39,12 @@ class SandboxResult:
 
     @property
     def success(self) -> bool:
-        return self.exit_code == 0 and not self.timed_out and not self.oom_killed
+        return (
+            self.exit_code == 0
+            and not self.timed_out
+            and not self.oom_killed
+            and not self.sandbox_error
+        )
 
 
 @dataclass

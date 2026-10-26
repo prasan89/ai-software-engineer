@@ -108,6 +108,12 @@ class VerificationResult(BaseModel):
     tests_run: int
     tests_passed: int
     tests_failed: int
+    # Set when the sandbox could not run (Docker unavailable, path error, etc.)
+    sandbox_unavailable: bool = False
+    # Set when the container was OOM-killed
+    oom_killed: bool = False
+    # Set when execution exceeded the timeout
+    timed_out: bool = False
 
 
 class RunFailed(BaseModel):

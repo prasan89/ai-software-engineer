@@ -4,9 +4,11 @@ Implements the issue → fix → verify pipeline with full cost-optimization
 integration: fingerprinting, duplicate detection, fix reuse, cache,
 checkpoint persistence, usage accounting, and model routing.
 
-Security: does not execute repository code directly. All code execution
-goes through agent.sandbox (currently subprocess with timeout; Docker
-isolation is the next milestone).
+Security: all repository code execution goes through DockerSandbox.
+DockerSandbox enforces: --network=none, --read-only root FS, --cap-drop ALL,
+--security-opt no-new-privileges, --user 1000:1000, resource limits, and
+guaranteed container cleanup. If Docker is unavailable, the run fails closed
+with a clear error — there is no fallback to host execution.
 """
 
 from __future__ import annotations
@@ -15,6 +17,7 @@ import json
 import logging
 import re
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TypeVar
@@ -34,7 +37,9 @@ from agent.patch import apply_patch
 from agent.providers.base import BaseLLMProvider
 from agent.providers.types import BudgetExceededError, LLMRequest, Message, Role
 from agent.repo import RepoContext, prepare_repo, read_file_content
-from agent.sandbox import SandboxResult, run_maven_tests
+from agent.sandbox import SandboxResult
+from agent.sandbox.docker_executor import DockerNotAvailableError, DockerSandbox
+from agent.sandbox.types import SandboxConfig
 from agent.verification import interpret_sandbox_result
 from agent.workflow.prompts import (
     CACHE_KEY_SYSTEM,
@@ -105,6 +110,15 @@ class WorkflowOrchestrator:
     """Runs the full issue-to-verified-fix pipeline.
 
     Dependencies are injected so every component can be replaced or mocked.
+
+    Args:
+        sandbox_config: Docker isolation parameters. Defaults are secure.
+            Injected for testing; production code should use the default.
+        sandbox_runner: Optional callable ``(repo_path) -> SandboxResult``.
+            When provided, replaces the default ``DockerSandbox`` execution.
+            Use ONLY for integration tests against trusted fixtures (inject
+            ``LocalSandbox(trusted=True).run_maven_tests``). Never pass an
+            arbitrary callable for untrusted repositories.
     """
 
     def __init__(
@@ -116,6 +130,8 @@ class WorkflowOrchestrator:
         usage_tracker: UsageTracker | None = None,
         model_router: ModelRouter | None = None,
         metrics: CacheMetrics | None = None,
+        sandbox_config: SandboxConfig | None = None,
+        sandbox_runner: Callable[[str | Path], SandboxResult] | None = None,
     ) -> None:
         self._provider = provider
         self._fix_store = fix_store if fix_store is not None else FixStore()
@@ -124,6 +140,8 @@ class WorkflowOrchestrator:
         self._usage = usage_tracker if usage_tracker is not None else UsageTracker()
         self._router = model_router if model_router is not None else ModelRouter()
         self._metrics = metrics if metrics is not None else CacheMetrics()
+        self._sandbox_config = sandbox_config
+        self._sandbox_runner = sandbox_runner
 
     async def run(self, inp: RunInput) -> RunReport:
         """Execute the full pipeline and return a structured report."""
@@ -211,16 +229,23 @@ class WorkflowOrchestrator:
                 # Fix no longer applies — fall through to fresh analysis
                 logger.warning("Cached fix no longer applies cleanly; running fresh analysis")
             else:
-                sandbox = run_maven_tests(inp.repo_path)
+                sandbox = self._run_sandbox(inp.repo_path)
                 reuse_verification = interpret_sandbox_result(inp.run_id, sandbox)
                 emit(reuse_verification)
-                emit(
-                    RunCompleted(
-                        run_id=inp.run_id,
-                        reused_fix=True,
-                        total_cost_usd=self._usage.global_cost_usd(),
+                if reuse_verification.passed:
+                    emit(
+                        RunCompleted(
+                            run_id=inp.run_id,
+                            reused_fix=True,
+                            total_cost_usd=self._usage.global_cost_usd(),
+                        )
                     )
-                )
+                else:
+                    reason = (
+                        "Sandbox unavailable" if reuse_verification.sandbox_unavailable
+                        else "Verification failed for reused fix"
+                    )
+                    emit(RunFailed(run_id=inp.run_id, stage=WorkflowStage.sandbox_execution, reason=reason))
                 return self._make_report(
                     inp, state, events, "", fix.patch_unified_diff, fix, sandbox, start,
                     root_cause=f"[REUSED] {fix.metadata.get('root_cause', '')}",
@@ -325,7 +350,7 @@ class WorkflowOrchestrator:
             emit(StageStarted(run_id=inp.run_id, stage=WorkflowStage.sandbox_execution))
             state.stage = WorkflowStage.sandbox_execution
 
-            sandbox_result = run_maven_tests(inp.repo_path, timeout_seconds=120)
+            sandbox_result = self._run_sandbox(inp.repo_path)
             emit(StageCompleted(run_id=inp.run_id, stage=WorkflowStage.sandbox_execution))
 
             # Verify
@@ -375,6 +400,55 @@ class WorkflowOrchestrator:
             fix_description=diagnosis.fix_description if diagnosis else "",
             verification=verification,
         )
+
+    # ------------------------------------------------------------------ #
+    # Sandbox execution                                                     #
+    # ------------------------------------------------------------------ #
+
+    def _run_sandbox(self, repo_path: str | Path) -> SandboxResult:
+        """Run Maven tests in an isolated Docker container.
+
+        When ``sandbox_runner`` was injected at construction time (integration
+        tests with trusted fixtures), that callable is used instead. In all
+        other cases ``DockerSandbox`` is used and Docker unavailability fails
+        closed — there is no fallback to host execution.
+
+        Args:
+            repo_path: Path to the Maven project root. Must contain pom.xml.
+
+        Returns:
+            SandboxResult. Check .sandbox_error, .timed_out, .oom_killed before
+            inspecting exit_code or test counts.
+        """
+        if self._sandbox_runner is not None:
+            return self._sandbox_runner(repo_path)
+
+        sandbox = DockerSandbox(config=self._sandbox_config)
+        try:
+            return sandbox.run_maven_tests(repo_path)
+        except DockerNotAvailableError as exc:
+            logger.error("Docker unavailable — run cannot proceed: %s", exc)
+            return SandboxResult(
+                command=[],
+                exit_code=-1,
+                stdout="",
+                stderr=str(exc),
+                elapsed_seconds=0.0,
+                sandbox_error=True,
+                sandbox_error_message=str(exc),
+            )
+        except ValueError as exc:
+            # pom.xml not found or invalid repo path
+            logger.error("Invalid repo path for sandbox: %s", exc)
+            return SandboxResult(
+                command=[],
+                exit_code=-1,
+                stdout="",
+                stderr=str(exc),
+                elapsed_seconds=0.0,
+                sandbox_error=True,
+                sandbox_error_message=str(exc),
+            )
 
     # ------------------------------------------------------------------ #
     # LLM call helpers                                                      #

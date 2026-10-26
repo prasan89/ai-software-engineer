@@ -74,6 +74,7 @@ from agent.providers.types import (
     UsageStats,
 )
 from agent.repo import prepare_repo
+from agent.sandbox.local_executor import LocalSandbox
 from agent.workflow.orchestrator import RunInput, RunReport, WorkflowOrchestrator
 from agent.workflow.states import (
     FixReused,
@@ -276,6 +277,11 @@ class BadPatchThenGoodProvider(FakeProvider):
         return _make_response(self._test_json)
 
 
+def _local_sandbox_runner(repo_path: object) -> object:
+    """Trusted sandbox runner for integration tests against version-controlled fixtures."""
+    return LocalSandbox(trusted=True).run_maven_tests(repo_path)  # type: ignore[arg-type]
+
+
 def _make_orch(
     provider: BaseLLMProvider,
     fix_store: FixStore | None = None,
@@ -291,6 +297,7 @@ def _make_orch(
         checkpoint_manager=checkpoints,
         usage_tracker=usage,
         metrics=metrics,
+        sandbox_runner=_local_sandbox_runner,  # type: ignore[arg-type]
     )
 
 

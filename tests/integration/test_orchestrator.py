@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from collections.abc import Generator
 from pathlib import Path
 
 import pytest
@@ -39,6 +40,7 @@ from agent.providers.types import (
     ProviderInfo,
     UsageStats,
 )
+from agent.sandbox.local_executor import LocalSandbox
 from agent.workflow.orchestrator import RunInput, WorkflowOrchestrator
 from agent.workflow.states import (
     FixReused,
@@ -102,7 +104,7 @@ REPO_NAME = "local/spring-calc"
 
 
 @pytest.fixture()
-def fixture_repo_clean():
+def fixture_repo_clean() -> Generator[Path, None, None]:
     """Yield the fixture path, then reset to the committed HEAD state."""
     yield FIXTURE_REPO
     subprocess.run(
@@ -131,7 +133,7 @@ class FakeProvider(BaseLLMProvider):
 
     @property
     def info(self) -> ProviderInfo:
-        return ProviderInfo(name="fake", base_url="", model_id="muse-spark-1.3")
+        return ProviderInfo(name="fake", base_url="", auth_header="", docs_url="")
 
     async def chat(self, request: LLMRequest) -> LLMResponse:
         self.call_count += 1
@@ -149,6 +151,11 @@ class FakeProvider(BaseLLMProvider):
         return "muse-spark-1.3"
 
 
+def _local_sandbox_runner(repo_path: object) -> object:
+    """Trusted sandbox runner for integration tests against version-controlled fixtures."""
+    return LocalSandbox(trusted=True).run_maven_tests(repo_path)  # type: ignore[arg-type]
+
+
 def make_orchestrator(
     provider: BaseLLMProvider,
     fix_store: FixStore | None = None,
@@ -161,6 +168,7 @@ def make_orchestrator(
         checkpoint_manager=CheckpointManager(),
         usage_tracker=UsageTracker(),
         metrics=CacheMetrics(),
+        sandbox_runner=_local_sandbox_runner,  # type: ignore[arg-type]
     )
 
 
@@ -395,6 +403,7 @@ def test_usage_tracker_records_llm_calls(fixture_repo_clean: Path) -> None:
         checkpoint_manager=CheckpointManager(),
         usage_tracker=usage,
         metrics=CacheMetrics(),
+        sandbox_runner=_local_sandbox_runner,  # type: ignore[arg-type]
     )
     inp = RunInput(
         repo_path=fixture_repo_clean,
@@ -468,6 +477,7 @@ def test_checkpoint_is_created_and_completed(fixture_repo_clean: Path) -> None:
         checkpoint_manager=checkpoints,
         usage_tracker=UsageTracker(),
         metrics=CacheMetrics(),
+        sandbox_runner=_local_sandbox_runner,  # type: ignore[arg-type]
     )
     inp = RunInput(
         repo_path=fixture_repo_clean,
@@ -500,6 +510,7 @@ def test_cache_metrics_track_hits_and_misses(fixture_repo_clean: Path) -> None:
         checkpoint_manager=CheckpointManager(),
         usage_tracker=UsageTracker(),
         metrics=metrics,
+        sandbox_runner=_local_sandbox_runner,  # type: ignore[arg-type]
     )
     inp = RunInput(
         repo_path=fixture_repo_clean,
@@ -528,6 +539,7 @@ def test_cache_metrics_track_hits_and_misses(fixture_repo_clean: Path) -> None:
         checkpoint_manager=CheckpointManager(),
         usage_tracker=UsageTracker(),
         metrics=metrics,
+        sandbox_runner=_local_sandbox_runner,  # type: ignore[arg-type]
     )
     inp2 = RunInput(
         repo_path=fixture_repo_clean,
@@ -539,5 +551,4 @@ def test_cache_metrics_track_hits_and_misses(fixture_repo_clean: Path) -> None:
     asyncio.run(orch2.run(inp2))
 
     assert metrics.verified_fix_reuses >= 1, "Second run should reuse the verified fix"
-    report_dict = metrics.report()
-    assert report_dict["verified_fix_reuses"] >= 1
+    assert metrics.verified_fix_reuses >= 1
