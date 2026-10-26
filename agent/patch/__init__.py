@@ -31,10 +31,11 @@ def apply_patch(repo_root: str | Path, unified_diff: str) -> PatchResult:
 
     Steps:
       1. Repair hunk count headers (LLM often gets the line counts wrong).
-      2. Write the diff to a temporary file.
-      3. Run `git apply --check` — aborts if the patch does not apply cleanly.
-      4. Run `git apply` — applies the patch.
-      5. Return the list of modified files.
+      2. Validate that all target paths stay inside the repository root.
+      3. Write the diff to a temporary file.
+      4. Run `patch --dry-run` — aborts if the patch does not apply cleanly.
+      5. Run `patch` — applies the patch.
+      6. Return the list of modified files.
 
     Args:
         repo_root: Absolute path to the repository root.
@@ -53,14 +54,27 @@ def apply_patch(repo_root: str | Path, unified_diff: str) -> PatchResult:
             error=f"Repo root does not exist: {root}",
         )
 
-    # Reject patches that reference paths outside the repository
-    if "../" in unified_diff or "\\..\\" in unified_diff:
+    # Reject null bytes in the diff (can confuse text tools and hide content)
+    if "\x00" in unified_diff:
         return PatchResult(
             success=False,
             modified_files=[],
             stdout="",
             stderr="",
-            error="Patch rejected: contains path traversal sequence",
+            error="Patch rejected: contains null bytes",
+        )
+
+    # Validate every target path in the diff stays inside the repo root.
+    # This catches "../", absolute paths (/etc/passwd), and symlink escapes.
+    # We do this BEFORE writing the patch file to avoid touching the filesystem.
+    traversal_error = _check_patch_paths(unified_diff, root)
+    if traversal_error:
+        return PatchResult(
+            success=False,
+            modified_files=[],
+            stdout="",
+            stderr="",
+            error=traversal_error,
         )
 
     # Repair hunk count headers — LLM-generated diffs often have correct content
@@ -180,13 +194,34 @@ def _parse_modified_files(diff: str) -> list[str]:
     return files
 
 
-def _parse_stat_files(stat_output: str) -> list[str]:
-    files = []
-    for line in stat_output.splitlines():
-        line = line.strip()
-        if "|" in line:
-            path = line.split("|")[0].strip()
-            if path:
-                files.append(path)
-    return files
+def _check_patch_paths(diff: str, root: Path) -> str:
+    """Verify every target path in the diff stays inside root.
+
+    Returns an error message string if a violation is found, empty string if clean.
+    Checks both --- and +++ lines (applying -p1 strips the first path component).
+    """
+    for line in diff.splitlines():
+        for prefix in ("--- ", "+++ "):
+            if not line.startswith(prefix):
+                continue
+            raw = line[len(prefix):].strip()
+            # Ignore /dev/null (new/deleted file markers)
+            if raw in ("/dev/null", ""):
+                continue
+            # Strip git-style a/ or b/ prefix (patch -p1 strips one component)
+            if raw.startswith(("a/", "b/")):
+                raw = raw[2:]
+            # Reject absolute paths immediately
+            if raw.startswith("/"):
+                return f"Patch rejected: absolute path in diff header: {raw!r}"
+            # Resolve against root and check containment
+            try:
+                candidate = (root / raw).resolve()
+            except (ValueError, OSError):
+                return f"Patch rejected: cannot resolve path: {raw!r}"
+            try:
+                candidate.relative_to(root)
+            except ValueError:
+                return f"Patch rejected: path escapes repository root: {raw!r}"
+    return ""
 

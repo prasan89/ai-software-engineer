@@ -82,7 +82,9 @@ class RunManager:
         now = time.monotonic()
         stale = [
             rid for rid, rec in self._runs.items()
-            if rec.report is not None and (now - rec.created_at) > MAX_AGE_SECONDS
+            # Evict completed runs (report set) AND failed runs (error set, no report)
+            # after MAX_AGE_SECONDS to prevent unbounded memory growth.
+            if (rec.report is not None or rec.error) and (now - rec.created_at) > MAX_AGE_SECONDS
         ]
         for rid in stale:
             del self._runs[rid]

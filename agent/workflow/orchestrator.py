@@ -593,7 +593,18 @@ class WorkflowOrchestrator:
         if not test_files:
             logger.warning("No test file found to inject generated test into")
             return
-        test_path = Path(test_files[0].abs_path)
+        test_path = Path(test_files[0].abs_path).resolve()
+        # Verify the resolved path is inside the repository root to prevent
+        # symlink-based escapes (a symlink in the repo pointing outside).
+        repo_root = Path(repo.root).resolve()
+        try:
+            test_path.relative_to(repo_root)
+        except ValueError:
+            logger.error(
+                "Refusing to write test: resolved path %s is outside repo root %s",
+                test_path, repo_root,
+            )
+            return
         content = test_path.read_text(encoding="utf-8")
         if not content.rstrip().endswith("}"):
             return

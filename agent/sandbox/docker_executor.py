@@ -48,6 +48,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -248,6 +249,7 @@ class DockerSandbox:
         if m2_dir is not None:
             maven_args += ["-Dmaven.repo.local=/tmp/.m2", "--offline"]
         if test_class:
+            _validate_test_class(test_class)
             maven_args.append(f"-Dtest={test_class}")
         if extra_maven_args:
             _validate_maven_args(extra_maven_args)
@@ -280,8 +282,11 @@ class DockerSandbox:
         cmd += ["--user", cfg.run_as_user]
 
         # Writable tmpfs mounts for /tmp (Maven temp files live here)
+        # noexec: do not allow execution of binaries from /tmp — Maven does not
+        # need to exec from /tmp; this prevents a malicious plugin from writing
+        # and then executing a binary there.
         for mount in cfg.tmpfs_mounts:
-            cmd += ["--tmpfs", f"{mount}:exec"]
+            cmd += ["--tmpfs", f"{mount}:noexec,nosuid,nodev"]
 
         # Workspace volume: the per-run copy mounted rw so Docker can overlay /workspace/target
         cmd += ["-v", f"{workspace}:/workspace:rw"]
@@ -355,12 +360,22 @@ class DockerSandbox:
 
     @staticmethod
     def _kill_container_by_cmd(cmd: list[str]) -> None:
-        """Extract container name from cmd and stop it (best effort)."""
+        """Extract container name from cmd and forcibly stop it (best effort).
+
+        Sends SIGTERM via `docker stop` then SIGKILL via `docker kill` to ensure
+        the container is removed even if it ignores SIGTERM.
+        """
         try:
             name_idx = cmd.index("--name") + 1
             container_name = cmd[name_idx]
             subprocess.run(
                 ["docker", "stop", "--time=3", container_name],
+                capture_output=True,
+                timeout=10,
+            )
+            # Unconditionally send SIGKILL; `docker kill` is a no-op if already gone
+            subprocess.run(
+                ["docker", "kill", container_name],
                 capture_output=True,
                 timeout=10,
             )
@@ -379,6 +394,25 @@ _ALLOWED_MAVEN_ARG_PREFIXES = (
     "-Dsurefire",
     "-Dfailsafe",
 )
+
+# Allowlist for -Dtest= class name: Java identifiers, dots, commas, hashes (method selectors),
+# wildcards, and plus signs. Reject anything that could inject further Maven args.
+_TEST_CLASS_RE = re.compile(r"^[A-Za-z0-9_.,$#+*\-]+$")
+
+
+def _validate_test_class(test_class: str) -> None:
+    """Validate -Dtest= value to prevent Maven property injection.
+
+    Maven accepts 'ClassName', 'ClassName#method', 'pkg.Class,pkg.Other',
+    wildcards like 'com.example.*Test', and compound selectors. All of these
+    consist of identifiers, dots, commas, hashes, plus signs, and wildcards.
+    Reject anything else (spaces, semicolons, -D flags, shell chars).
+    """
+    if not _TEST_CLASS_RE.match(test_class):
+        raise ValueError(
+            f"Invalid test_class {test_class!r}: only Java identifiers, dots, "
+            "commas, hashes, wildcards and plus signs are allowed"
+        )
 
 
 def _validate_maven_args(args: list[str]) -> None:
