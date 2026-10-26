@@ -1,0 +1,574 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Software Engineer Agent</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+:root {
+  --bg: #0f1117; --surface: #1a1d27; --surface2: #21253a;
+  --border: #2a2f45; --accent: #4f9cf9; --accent2: #7c3aed;
+  --green: #22c55e; --red: #ef4444; --yellow: #f59e0b; --gray: #64748b;
+  --text: #e2e8f0; --text2: #94a3b8; --text3: #64748b;
+  --radius: 8px; --mono: 'JetBrains Mono', 'Fira Code', monospace;
+}
+body { background: var(--bg); color: var(--text); font-family: system-ui, sans-serif;
+       font-size: 14px; min-height: 100vh; }
+h1 { font-size: 1.4rem; font-weight: 700; }
+h2 { font-size: 1rem; font-weight: 600; color: var(--text2); margin-bottom: 12px; }
+h3 { font-size: 0.85rem; font-weight: 600; color: var(--text3); text-transform: uppercase;
+     letter-spacing: .05em; margin-bottom: 8px; }
+
+.header { background: var(--surface); border-bottom: 1px solid var(--border);
+          padding: 16px 24px; display: flex; align-items: center; gap: 16px; }
+.badge { background: var(--accent2); color: #fff; font-size: 0.7rem; padding: 2px 8px;
+         border-radius: 99px; font-weight: 600; }
+
+.layout { display: grid; grid-template-columns: 380px 1fr; gap: 0; height: calc(100vh - 57px); }
+.sidebar { background: var(--surface); border-right: 1px solid var(--border);
+           padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 20px; }
+.main { padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; }
+
+.card { background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius);
+        padding: 16px; }
+.card.highlight { border-color: var(--accent); }
+
+label { display: block; font-size: 0.8rem; color: var(--text2); margin-bottom: 4px; font-weight: 500; }
+select, textarea, input[type=text] {
+  width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text);
+  padding: 8px 10px; border-radius: 6px; font-size: 0.875rem; font-family: inherit;
+  transition: border-color .15s; }
+select:focus, textarea:focus, input:focus { outline: none; border-color: var(--accent); }
+textarea { resize: vertical; min-height: 90px; line-height: 1.5; }
+
+.btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 16px;
+       border-radius: 6px; font-size: 0.875rem; font-weight: 600; cursor: pointer;
+       border: none; transition: opacity .15s, transform .1s; }
+.btn:hover { opacity: .9; }
+.btn:active { transform: scale(.98); }
+.btn:disabled { opacity: .4; cursor: not-allowed; transform: none; }
+.btn-primary { background: var(--accent); color: #fff; }
+.btn-secondary { background: var(--surface2); color: var(--text2); border: 1px solid var(--border); }
+.btn-ghost { background: transparent; color: var(--text2); border: 1px solid var(--border); }
+.btn-sm { padding: 5px 10px; font-size: 0.8rem; }
+
+.stage-list { display: flex; flex-direction: column; gap: 6px; }
+.stage-row { display: flex; align-items: center; gap: 10px; padding: 8px 12px;
+             border-radius: 6px; font-size: 0.85rem; background: var(--bg);
+             border: 1px solid var(--border); transition: all .2s; }
+.stage-row.active { border-color: var(--accent); background: #1a2a3a; }
+.stage-row.done   { border-color: var(--green); }
+.stage-row.failed { border-color: var(--red); }
+.stage-row.skipped{ opacity: .4; }
+.stage-icon { width: 20px; text-align: center; }
+.stage-label { flex: 1; }
+.stage-extra { font-size: 0.75rem; color: var(--text3); }
+
+.spinner { display: inline-block; width: 14px; height: 14px;
+           border: 2px solid var(--border); border-top-color: var(--accent);
+           border-radius: 50%; animation: spin .7s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.metric-row { display: flex; justify-content: space-between; align-items: center;
+              padding: 5px 0; border-bottom: 1px solid var(--border); font-size: 0.82rem; }
+.metric-row:last-child { border-bottom: none; }
+.metric-val { font-weight: 600; color: var(--text); }
+.metric-val.green { color: var(--green); }
+.metric-val.red   { color: var(--red); }
+.metric-val.yellow{ color: var(--yellow); }
+
+pre.diff { background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+           padding: 12px; font-family: var(--mono); font-size: 0.78rem; overflow-x: auto;
+           line-height: 1.55; white-space: pre; max-height: 400px; overflow-y: auto; }
+.diff-add { color: var(--green); }
+.diff-del { color: var(--red); }
+.diff-hunk{ color: var(--accent); }
+
+pre.log { background: #0a0c14; border: 1px solid var(--border); border-radius: 6px;
+          padding: 12px; font-family: var(--mono); font-size: 0.75rem; color: #7dd3fc;
+          max-height: 240px; overflow-y: auto; line-height: 1.5; }
+
+.pills { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.pill { padding: 3px 10px; border-radius: 99px; font-size: 0.75rem; font-weight: 600; }
+.pill-green { background: #14532d; color: var(--green); }
+.pill-red   { background: #450a0a; color: var(--red); }
+.pill-blue  { background: #1e3a5f; color: var(--accent); }
+.pill-gray  { background: #1e2535; color: var(--text3); }
+.pill-yellow{ background: #3b2700; color: var(--yellow); }
+
+.alert { padding: 10px 14px; border-radius: 6px; font-size: 0.85rem; margin-bottom: 12px; }
+.alert-error { background: #450a0a; border: 1px solid #7f1d1d; color: #fca5a5; }
+.alert-info  { background: #0c1a3a; border: 1px solid #1e3a5f; color: #93c5fd; }
+.alert-success { background: #052e16; border: 1px solid #14532d; color: #86efac; }
+
+.cache-event { padding: 6px 10px; border-radius: 4px; font-size: 0.8rem; margin-bottom: 4px; }
+.cache-hit  { background: #052e16; color: var(--green); }
+.cache-miss { background: #3b2700; color: var(--yellow); }
+.cache-reuse{ background: #1e3a5f; color: var(--accent); }
+
+.tabs { display: flex; gap: 1px; border-bottom: 1px solid var(--border); margin-bottom: 12px; }
+.tab { padding: 6px 14px; cursor: pointer; font-size: 0.82rem; color: var(--text3);
+       border-bottom: 2px solid transparent; }
+.tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+#empty-state { text-align: center; padding: 60px 20px; color: var(--text3); }
+#empty-state .big { font-size: 3rem; margin-bottom: 12px; }
+
+.hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div>
+    <h1>AI Software Engineer Agent</h1>
+    <div style="font-size:.8rem; color:var(--text3); margin-top:2px">
+      Meta muse-spark-1.3 · Docker-isolated Maven · Engineering Memory
+    </div>
+  </div>
+  <span class="badge">Hackathon Demo</span>
+</div>
+
+<div class="layout">
+  <!-- Sidebar: form + controls -->
+  <aside class="sidebar">
+    <div class="card">
+      <h2>Submit Issue</h2>
+
+      <div style="margin-bottom:12px">
+        <label>Fixture repository</label>
+        <select id="fixture-select">
+          <option value="">Loading…</option>
+        </select>
+      </div>
+
+      <div style="margin-bottom:12px">
+        <label>Issue title</label>
+        <input type="text" id="issue-title" placeholder="e.g. divide() throws NPE for null divisor" />
+      </div>
+
+      <div style="margin-bottom:16px">
+        <label>Issue body (optional context)</label>
+        <textarea id="issue-body" placeholder="Paste the full issue description here…"></textarea>
+      </div>
+
+      <div style="display:flex; gap:8px; flex-wrap:wrap">
+        <button class="btn btn-primary" id="btn-start">▶ Start Run</button>
+        <button class="btn btn-secondary hidden" id="btn-repeat">
+          ↩ Repeat Issue
+        </button>
+      </div>
+
+      <div id="run-error" class="alert alert-error hidden" style="margin-top:12px"></div>
+    </div>
+
+    <!-- Stage progress -->
+    <div class="card" id="stage-card">
+      <h2>Pipeline Stages</h2>
+      <div class="stage-list" id="stage-list"></div>
+    </div>
+
+    <!-- LLM metrics -->
+    <div class="card hidden" id="metrics-card">
+      <h2>LLM Usage</h2>
+      <div id="metrics-body"></div>
+    </div>
+
+    <!-- Engineering Memory panel -->
+    <div class="card" id="memory-card">
+      <h2>Engineering Memory</h2>
+      <div id="memory-body" style="font-size:.8rem; color:var(--text3)">
+        No activity yet. Run an issue to see cache events.
+      </div>
+    </div>
+  </aside>
+
+  <!-- Main content area -->
+  <main class="main">
+    <div id="empty-state">
+      <div class="big">🤖</div>
+      <div style="font-size:1rem; font-weight:600; color:var(--text2)">
+        Ready to analyze your Java bug
+      </div>
+      <div style="margin-top:8px; max-width:380px; margin-inline:auto">
+        Select a fixture, describe the issue, and click <strong>Start Run</strong>.
+        The agent will analyze the code with Meta muse-spark-1.3, generate a patch,
+        write a regression test, and verify the fix inside Docker.
+      </div>
+    </div>
+
+    <div id="results" class="hidden">
+      <!-- Verification badge row -->
+      <div class="pills" id="result-pills"></div>
+
+      <!-- Error banner -->
+      <div id="result-error" class="alert alert-error hidden"></div>
+
+      <div id="tabs-row" class="tabs">
+        <span class="tab active" data-tab="diff">Code Diff</span>
+        <span class="tab" data-tab="tests">Test Results</span>
+        <span class="tab" data-tab="diagnosis">Diagnosis</span>
+        <span class="tab" data-tab="log">Build Log</span>
+      </div>
+
+      <div id="tab-diff">
+        <h3>Proposed Fix</h3>
+        <pre class="diff" id="diff-view">— waiting for analysis —</pre>
+      </div>
+      <div id="tab-tests" class="hidden">
+        <h3>Maven Test Results</h3>
+        <div id="test-results"></div>
+      </div>
+      <div id="tab-diagnosis" class="hidden">
+        <h3>Root Cause</h3>
+        <div id="diagnosis-view" class="card" style="font-size:.85rem; line-height:1.6"></div>
+      </div>
+      <div id="tab-log" class="hidden">
+        <h3>Build Output</h3>
+        <pre class="log" id="log-view">— waiting —</pre>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script>
+// -----------------------------------------------------------------
+// State
+// -----------------------------------------------------------------
+let currentRunId = null;
+let currentFixture = null;
+let currentEvtSource = null;
+let llmCalls = [];
+let cacheEvents = [];
+let reusedFix = false;
+
+const STAGES = [
+  { key: 'intake',            label: 'Intake & Fingerprint' },
+  { key: 'repo_analysis',     label: 'Repository Analysis' },
+  { key: 'root_cause',        label: 'Root Cause (LLM)' },
+  { key: 'patch',             label: 'Patch Generation' },
+  { key: 'test_generation',   label: 'Regression Test (LLM)' },
+  { key: 'sandbox_execution', label: 'Docker Verification' },
+  { key: 'verification',      label: 'Verification' },
+];
+
+let stageState = {};  // key -> 'pending' | 'active' | 'done' | 'failed'
+
+// -----------------------------------------------------------------
+// Init
+// -----------------------------------------------------------------
+async function init() {
+  await loadFixtures();
+  renderStages();
+  document.getElementById('fixture-select').addEventListener('change', onFixtureChange);
+  document.getElementById('btn-start').addEventListener('click', startRun);
+  document.getElementById('btn-repeat').addEventListener('click', repeatRun);
+  document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => activateTab(t.dataset.tab)));
+}
+
+async function loadFixtures() {
+  try {
+    const resp = await fetch('/fixtures');
+    const list = await resp.json();
+    const sel = document.getElementById('fixture-select');
+    sel.innerHTML = list.map(f =>
+      `<option value="${f.key}" data-title="${escHtml(f.issue_title)}" data-body="${escHtml(f.issue_body)}">${escHtml(f.label)}</option>`
+    ).join('');
+    if (list.length) onFixtureChange();
+  } catch(e) {
+    document.getElementById('fixture-select').innerHTML = '<option>Error loading fixtures</option>';
+  }
+}
+
+function onFixtureChange() {
+  const sel = document.getElementById('fixture-select');
+  const opt = sel.options[sel.selectedIndex];
+  document.getElementById('issue-title').value = opt.dataset.title || '';
+  document.getElementById('issue-body').value = opt.dataset.body || '';
+}
+
+// -----------------------------------------------------------------
+// Run management
+// -----------------------------------------------------------------
+async function startRun() {
+  clearResults();
+  const fixtureKey = document.getElementById('fixture-select').value;
+  const issueTitle = document.getElementById('issue-title').value.trim();
+  const issueBody  = document.getElementById('issue-body').value.trim();
+
+  if (!fixtureKey || !issueTitle) {
+    showRunError('Please select a fixture and provide an issue title.');
+    return;
+  }
+
+  setRunning(true);
+
+  try {
+    const resp = await fetch('/runs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fixture_key: fixtureKey, issue_title: issueTitle, issue_body: issueBody }),
+    });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+      throw new Error(err.detail || resp.statusText);
+    }
+    const { run_id } = await resp.json();
+    currentRunId = run_id;
+    currentFixture = { fixtureKey, issueTitle, issueBody };
+    subscribeToEvents(run_id);
+    document.getElementById('empty-state').classList.add('hidden');
+    document.getElementById('results').classList.remove('hidden');
+  } catch(e) {
+    setRunning(false);
+    showRunError(String(e));
+  }
+}
+
+function repeatRun() {
+  if (!currentFixture) return;
+  clearResults();
+  startRun();
+}
+
+function subscribeToEvents(runId) {
+  if (currentEvtSource) { currentEvtSource.close(); currentEvtSource = null; }
+  const es = new EventSource(`/runs/${runId}/events`);
+  currentEvtSource = es;
+
+  es.addEventListener('message', (e) => {
+    try {
+      const ev = JSON.parse(e.data);
+      handleEvent(ev);
+    } catch(err) {}
+  });
+
+  es.addEventListener('error', () => {
+    es.close();
+    setRunning(false);
+  });
+}
+
+// -----------------------------------------------------------------
+// Event handling
+// -----------------------------------------------------------------
+function handleEvent(ev) {
+  switch(ev.event) {
+    case 'stage_started':
+      stageState[ev.stage] = 'active';
+      renderStages();
+      break;
+    case 'stage_completed':
+      stageState[ev.stage] = 'done';
+      renderStages();
+      break;
+    case 'cache_hit':
+      addCacheEvent('hit', `Cache HIT: ${ev.stage} (fp ${ev.fingerprint_short})`);
+      break;
+    case 'fix_reused':
+      reusedFix = true;
+      addCacheEvent('reuse', `Fix REUSED — 0 LLM calls, $0.000 cost (fp ${ev.fingerprint_short})`);
+      break;
+    case 'llm_call':
+      llmCalls.push(ev);
+      renderMetrics();
+      break;
+    case 'run_failed':
+      stageState[ev.stage] = 'failed';
+      renderStages();
+      setRunning(false);
+      document.getElementById('result-error').textContent = `Run failed: ${ev.reason}`;
+      document.getElementById('result-error').classList.remove('hidden');
+      break;
+    case 'verification_result':
+      // handled by run_report
+      break;
+    case 'run_report':
+      onRunComplete(ev);
+      break;
+    case 'run_error':
+      setRunning(false);
+      showRunError(ev.error);
+      break;
+  }
+}
+
+function onRunComplete(ev) {
+  setRunning(false);
+  document.getElementById('btn-repeat').classList.remove('hidden');
+
+  // Pills
+  const pills = document.getElementById('result-pills');
+  pills.innerHTML = '';
+  const v = ev.verification;
+  if (ev.success) {
+    pills.innerHTML += pill('green', v?.tests_run ? `✓ ${v.tests_run} tests passed` : '✓ Success');
+  } else {
+    pills.innerHTML += pill('red', `✗ Failed: ${ev.error || 'see details'}`);
+  }
+  if (ev.reused_fix) {
+    pills.innerHTML += pill('blue', '↩ Fix reused — 0 LLM calls');
+  } else if (llmCalls.length) {
+    pills.innerHTML += pill('blue', `${llmCalls.length} LLM call${llmCalls.length>1?'s':''}`);
+  }
+  if (v) {
+    if (v.sandbox_unavailable) pills.innerHTML += pill('red', '⚠ Docker unavailable');
+    if (v.timed_out) pills.innerHTML += pill('yellow', '⏱ Timed out');
+    if (v.oom_killed)  pills.innerHTML += pill('yellow', '💥 OOM killed');
+  }
+  const usage = ev.usage_summary || {};
+  const cost = usage.total_cost_usd ?? 0;
+  pills.innerHTML += pill('gray', `$${cost.toFixed(6)}`);
+  pills.innerHTML += pill('gray', `${ev.elapsed_seconds?.toFixed(1)}s`);
+
+  // Diff
+  const diffEl = document.getElementById('diff-view');
+  if (ev.unified_diff) {
+    diffEl.innerHTML = colorDiff(ev.unified_diff);
+  } else {
+    diffEl.textContent = ev.reused_fix ? '(fix reused from store — no new diff generated)' : '(no diff available)';
+  }
+
+  // Test results
+  const testEl = document.getElementById('test-results');
+  if (v) {
+    testEl.innerHTML = `
+      <div class="card">
+        <div class="metric-row"><span>Tests run</span><span class="metric-val">${v.tests_run}</span></div>
+        <div class="metric-row"><span>Tests passed</span><span class="metric-val green">${v.tests_passed}</span></div>
+        <div class="metric-row"><span>Tests failed</span><span class="metric-val ${v.tests_failed>0?'red':'green'}">${v.tests_failed}</span></div>
+        <div class="metric-row"><span>Verification</span><span class="metric-val ${v.passed?'green':'red'}">${v.passed?'PASSED':'FAILED'}</span></div>
+      </div>`;
+  }
+
+  // Diagnosis
+  const diagEl = document.getElementById('diagnosis-view');
+  diagEl.innerHTML = `<strong>Root cause:</strong> ${escHtml(ev.root_cause || '—')}<br><br>
+                      <strong>Fix:</strong> ${escHtml(ev.fix_description || '—')}`;
+
+  // Build log
+  document.getElementById('log-view').textContent = ev.sandbox_stdout || '(no output)';
+
+  // Metrics final update
+  renderMetrics(ev.usage_summary);
+}
+
+// -----------------------------------------------------------------
+// Rendering helpers
+// -----------------------------------------------------------------
+function renderStages() {
+  const el = document.getElementById('stage-list');
+  el.innerHTML = STAGES.map(s => {
+    const st = stageState[s.key] || 'pending';
+    let icon = '○';
+    if (st === 'active')  icon = '<span class="spinner"></span>';
+    if (st === 'done')    icon = '<span style="color:var(--green)">✓</span>';
+    if (st === 'failed')  icon = '<span style="color:var(--red)">✗</span>';
+    return `<div class="stage-row ${st}">
+              <span class="stage-icon">${icon}</span>
+              <span class="stage-label">${s.label}</span>
+            </div>`;
+  }).join('');
+}
+
+function renderMetrics(summary) {
+  const card = document.getElementById('metrics-card');
+  if (!llmCalls.length && !summary) return;
+  card.classList.remove('hidden');
+  const totalPrompt = (summary?.total_prompt_tokens) ?? llmCalls.reduce((a,c)=>a+c.prompt_tokens,0);
+  const totalCompl  = (summary?.total_completion_tokens) ?? llmCalls.reduce((a,c)=>a+c.completion_tokens,0);
+  const totalCost   = (summary?.total_cost_usd) ?? llmCalls.reduce((a,c)=>a+c.cost_usd,0);
+  const body = document.getElementById('metrics-body');
+  body.innerHTML = `
+    <div class="metric-row"><span>LLM calls</span><span class="metric-val">${llmCalls.length}</span></div>
+    <div class="metric-row"><span>Prompt tokens</span><span class="metric-val">${totalPrompt.toLocaleString()}</span></div>
+    <div class="metric-row"><span>Completion tokens</span><span class="metric-val">${totalCompl.toLocaleString()}</span></div>
+    <div class="metric-row"><span>Total cost</span><span class="metric-val yellow">$${totalCost.toFixed(6)}</span></div>
+    ${reusedFix ? `<div class="metric-row"><span>Savings (reuse)</span><span class="metric-val green">100%</span></div>` : ''}
+  `;
+  llmCalls.forEach((c, i) => {
+    body.innerHTML += `<div class="metric-row" style="font-size:.75rem">
+      <span>Call ${i+1} (${c.stage})</span>
+      <span class="metric-val" style="font-size:.75rem">${c.prompt_tokens}+${c.completion_tokens} tk · $${c.cost_usd.toFixed(5)}</span>
+    </div>`;
+  });
+}
+
+function addCacheEvent(type, msg) {
+  cacheEvents.push({ type, msg });
+  const el = document.getElementById('memory-body');
+  el.innerHTML = cacheEvents.map(ce => {
+    const cls = ce.type === 'hit' ? 'cache-hit' : ce.type === 'reuse' ? 'cache-reuse' : 'cache-miss';
+    return `<div class="cache-event ${cls}">${escHtml(ce.msg)}</div>`;
+  }).join('');
+}
+
+function colorDiff(diff) {
+  return diff.split('\n').map(line => {
+    if (line.startsWith('+') && !line.startsWith('+++'))
+      return `<span class="diff-add">${escHtml(line)}</span>`;
+    if (line.startsWith('-') && !line.startsWith('---'))
+      return `<span class="diff-del">${escHtml(line)}</span>`;
+    if (line.startsWith('@@'))
+      return `<span class="diff-hunk">${escHtml(line)}</span>`;
+    return escHtml(line);
+  }).join('\n');
+}
+
+function activateTab(name) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
+  document.getElementById('tab-diff').classList.toggle('hidden', name !== 'diff');
+  document.getElementById('tab-tests').classList.toggle('hidden', name !== 'tests');
+  document.getElementById('tab-diagnosis').classList.toggle('hidden', name !== 'diagnosis');
+  document.getElementById('tab-log').classList.toggle('hidden', name !== 'log');
+}
+
+function setRunning(on) {
+  const btn = document.getElementById('btn-start');
+  btn.disabled = on;
+  btn.innerHTML = on
+    ? '<span class="spinner"></span> Running…'
+    : '▶ Start Run';
+}
+
+function clearResults() {
+  llmCalls = [];
+  cacheEvents = [];
+  reusedFix = false;
+  stageState = {};
+  renderStages();
+  document.getElementById('result-pills').innerHTML = '';
+  document.getElementById('result-error').classList.add('hidden');
+  document.getElementById('run-error').classList.add('hidden');
+  document.getElementById('metrics-card').classList.add('hidden');
+  document.getElementById('memory-body').innerHTML = 'No activity yet.';
+  document.getElementById('diff-view').textContent = '— waiting for analysis —';
+  document.getElementById('test-results').innerHTML = '';
+  document.getElementById('diagnosis-view').innerHTML = '';
+  document.getElementById('log-view').textContent = '— waiting —';
+  document.getElementById('btn-repeat').classList.add('hidden');
+  if (currentEvtSource) { currentEvtSource.close(); currentEvtSource = null; }
+}
+
+function showRunError(msg) {
+  const el = document.getElementById('run-error');
+  el.textContent = msg;
+  el.classList.remove('hidden');
+}
+
+function pill(color, text) {
+  return `<span class="pill pill-${color}">${escHtml(text)}</span>`;
+}
+
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// -----------------------------------------------------------------
+// Boot
+// -----------------------------------------------------------------
+init();
+</script>
+</body>
+</html>

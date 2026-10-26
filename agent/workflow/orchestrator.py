@@ -13,6 +13,7 @@ with a clear error — there is no fallback to host execution.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import re
@@ -132,6 +133,7 @@ class WorkflowOrchestrator:
         metrics: CacheMetrics | None = None,
         sandbox_config: SandboxConfig | None = None,
         sandbox_runner: Callable[[str | Path], SandboxResult] | None = None,
+        event_callback: Callable[[RunEvent], None] | None = None,
     ) -> None:
         self._provider = provider
         self._fix_store = fix_store if fix_store is not None else FixStore()
@@ -142,6 +144,7 @@ class WorkflowOrchestrator:
         self._metrics = metrics if metrics is not None else CacheMetrics()
         self._sandbox_config = sandbox_config
         self._sandbox_runner = sandbox_runner
+        self._event_callback = event_callback
 
     async def run(self, inp: RunInput) -> RunReport:
         """Execute the full pipeline and return a structured report."""
@@ -154,6 +157,9 @@ class WorkflowOrchestrator:
         def emit(event: RunEvent) -> None:
             events.append(event)
             logger.info("event=%s run_id=%s", event.event, inp.run_id)
+            if self._event_callback is not None:
+                with contextlib.suppress(Exception):
+                    self._event_callback(event)
 
         try:
             report = await self._execute(inp, state, emit, events)
@@ -229,6 +235,12 @@ class WorkflowOrchestrator:
                 # Fix no longer applies — fall through to fresh analysis
                 logger.warning("Cached fix no longer applies cleanly; running fresh analysis")
             else:
+                # Re-apply saved test file contents (regression test from original run)
+                if fix.test_file_contents:
+                    for rel_path, content in fix.test_file_contents.items():
+                        target = Path(inp.repo_path) / rel_path
+                        if target.exists():
+                            target.write_text(content, encoding="utf-8")
                 sandbox = self._run_sandbox(inp.repo_path)
                 reuse_verification = interpret_sandbox_result(inp.run_id, sandbox)
                 emit(reuse_verification)
@@ -345,6 +357,10 @@ class WorkflowOrchestrator:
             # Apply the generated test to the repo
             if test_response:
                 self._inject_test_method(repo, test_response)
+                # Capture updated test file content for fix store persistence
+                test_files_list = [f for f in repo.files if "Test" in f.rel_path and f.rel_path.endswith(".java")]
+                if test_files_list:
+                    state.test_files[test_files_list[0].rel_path] = Path(test_files_list[0].abs_path).read_text(encoding="utf-8")
 
             # Run tests
             emit(StageStarted(run_id=inp.run_id, stage=WorkflowStage.sandbox_execution))
@@ -375,7 +391,7 @@ class WorkflowOrchestrator:
                 repo_full_name=inp.repo_full_name,
                 issue_number=inp.issue_number,
                 patch_unified_diff=diagnosis.unified_diff,
-                test_file_contents={},
+                test_file_contents=dict(state.test_files),
                 repo_tree_hash=repo.tree_hash,
                 metadata={
                     "root_cause": diagnosis.root_cause,
