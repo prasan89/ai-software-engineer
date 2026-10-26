@@ -424,8 +424,9 @@ class WorkflowOrchestrator:
             return self._sandbox_runner(repo_path)
 
         sandbox = DockerSandbox(config=self._sandbox_config)
+        m2_repo = self._sandbox_config.maven_local_repo if self._sandbox_config else None
         try:
-            return sandbox.run_maven_tests(repo_path)
+            return sandbox.run_maven_tests(repo_path, maven_local_repo=m2_repo)
         except DockerNotAvailableError as exc:
             logger.error("Docker unavailable — run cannot proceed: %s", exc)
             return SandboxResult(
@@ -468,7 +469,7 @@ class WorkflowOrchestrator:
                 Message(role=Role.system, content=SYSTEM_PROMPT),
                 Message(role=Role.user, content=make_diagnosis_prompt(issue_text, file_contents)),
             ],
-            max_tokens=2048,
+            max_tokens=4096,  # muse-spark-1.3 uses ~1000-2000 reasoning tokens internally
             temperature=0.1,
             prompt_cache_key=CACHE_KEY_SYSTEM,
             prompt_cache_retention="24h",
@@ -506,7 +507,7 @@ class WorkflowOrchestrator:
                     ),
                 ),
             ],
-            max_tokens=1024,
+            max_tokens=2048,  # muse-spark-1.3 uses ~500-1000 reasoning tokens for test gen
             temperature=0.1,
             prompt_cache_key=CACHE_KEY_SYSTEM,
             prompt_cache_retention="24h",
@@ -578,11 +579,37 @@ class WorkflowOrchestrator:
             return
         test_path = Path(test_files[0].abs_path)
         content = test_path.read_text(encoding="utf-8")
-        # Insert before the last closing brace of the class
-        if content.rstrip().endswith("}"):
-            new_method = f"\n    @Test\n    void {test_response.test_method_name}() {{\n        {test_response.test_method_body}\n    }}\n"
-            updated = content.rstrip()[:-1] + new_method + "}\n"
-            test_path.write_text(updated, encoding="utf-8")
+        if not content.rstrip().endswith("}"):
+            return
+
+        body = test_response.test_method_body.strip()
+        # LLM often returns the full method (with @Test and signature) as the "body".
+        # Detect this by checking if the body contains a method declaration; if so,
+        # insert it verbatim with consistent 4-space indentation.
+        is_full_method = re.search(r"\bvoid\b.*\(", body) is not None
+
+        if is_full_method:
+            # Normalize indentation to 4-space class-body level.
+            # The LLM often returns "@Test" at column 0 but the method signature
+            # with 4-space indent. Find the minimum indent of non-blank, non-annotation
+            # lines (the method signature), strip that many spaces, then prepend 4 spaces.
+            body_lines = body.splitlines()
+            sig_lines = [ln for ln in body_lines if ln.strip() and not ln.strip().startswith("@")]
+            min_indent = min((len(ln) - len(ln.lstrip()) for ln in sig_lines), default=0)
+            normalized = []
+            for ln in body_lines:
+                if not ln.strip():
+                    normalized.append("")
+                elif ln.startswith(" " * min_indent):
+                    normalized.append("    " + ln[min_indent:])
+                else:
+                    normalized.append("    " + ln)
+            new_method = "\n" + "\n".join(normalized) + "\n"
+        else:
+            new_method = f"\n    @Test\n    void {test_response.test_method_name}() {{\n        {body}\n    }}\n"
+
+        updated = content.rstrip()[:-1] + new_method + "}\n"
+        test_path.write_text(updated, encoding="utf-8")
 
     def _make_report(
         self,

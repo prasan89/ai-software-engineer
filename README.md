@@ -24,13 +24,17 @@ resumable checkpoints, model routing, and measurable token savings.
 | `agent/sandbox/local_executor.py` | Complete — host executor, opt-in trusted fixtures only |
 | `agent/verification/__init__.py` | Complete — maps all sandbox outcomes to VerificationResult |
 | `agent/repo/__init__.py` | Complete — file indexing, tree hashing |
-| `agent/patch/__init__.py` | Complete — unified-diff application via `git apply` |
+| `agent/patch/__init__.py` | Complete — unified-diff application via `patch -p1 -l -F 3` (LLM-tolerant) |
 | `agent/api/routes.py` | Partial — health endpoint only; POST /runs and SSE stream not yet implemented |
 | `agent/testgen/__init__.py` | Stub — test generation is handled inline in the orchestrator |
 
-**Live Meta inference:** Not yet verified in this environment (META_API_KEY not set).
-Four live API tests exist in `tests/unit/providers/test_meta_http.py` (marker `meta_api`);
-they are skipped when the key is absent with an explicit skip message.
+**Live Meta inference verified:** `muse-spark-1.3` — 4/4 live tests pass, all three e2e scenarios verified
+(see `scripts/e2e_demo.py`). Model uses ~148–2000 reasoning tokens per call; `max_tokens` ≥ 512 required.
+
+**E2E scenario results (2026-10-26):**
+- Scenario A (fresh analysis): `success=True`, 6 tests pass in Docker, ~29s, ~$0.016
+- Scenario B (fix reuse): `success=True`, 0 LLM calls, ~20s, $0.000 — fix reused from store
+- Scenario C (stale cache): `success=True`, 2 LLM calls (fresh analysis), ~33s — cache correctly invalidated
 
 ---
 

@@ -10,6 +10,7 @@ Path traversal is checked before applying.
 
 from __future__ import annotations
 
+import re
 import subprocess
 import tempfile
 from dataclasses import dataclass
@@ -29,10 +30,11 @@ def apply_patch(repo_root: str | Path, unified_diff: str) -> PatchResult:
     """Validate and apply a unified diff to the repository.
 
     Steps:
-      1. Write the diff to a temporary file.
-      2. Run `git apply --check` — aborts if the patch does not apply cleanly.
-      3. Run `git apply` — applies the patch.
-      4. Return the list of modified files.
+      1. Repair hunk count headers (LLM often gets the line counts wrong).
+      2. Write the diff to a temporary file.
+      3. Run `git apply --check` — aborts if the patch does not apply cleanly.
+      4. Run `git apply` — applies the patch.
+      5. Return the list of modified files.
 
     Args:
         repo_root: Absolute path to the repository root.
@@ -61,14 +63,22 @@ def apply_patch(repo_root: str | Path, unified_diff: str) -> PatchResult:
             error="Patch rejected: contains path traversal sequence",
         )
 
-    with tempfile.NamedTemporaryFile(suffix=".patch", mode="w", delete=False) as f:
-        f.write(unified_diff)
+    # Repair hunk count headers — LLM-generated diffs often have correct content
+    # but wrong @@ counts. Recompute counts from the actual body lines.
+    repaired = _repair_hunk_counts(unified_diff)
+
+    with tempfile.NamedTemporaryFile(suffix=".patch", mode="w", encoding="utf-8", delete=False) as f:
+        f.write(repaired)
         patch_file = f.name
 
     try:
         # Step 1: dry-run check
+        # Use BSD/GNU `patch` with -l (ignore whitespace) and -F3 (fuzz factor 3).
+        # LLM-generated diffs often have minor indentation or context-line differences;
+        # `git apply -C0` would apply at the wrong location. `patch -F3` uses context
+        # with tolerance, which correctly positions the hunk.
         check = subprocess.run(
-            ["git", "apply", "--check", patch_file],
+            ["patch", "-p1", "-l", "-F", "3", "--dry-run", "-i", patch_file],
             cwd=str(root),
             capture_output=True,
             text=True,
@@ -83,19 +93,12 @@ def apply_patch(repo_root: str | Path, unified_diff: str) -> PatchResult:
                 error="git apply --check failed; patch does not apply cleanly",
             )
 
-        # Step 2: get list of files the patch will touch
-        stat = subprocess.run(
-            ["git", "apply", "--stat", patch_file],
-            cwd=str(root),
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        modified = _parse_stat_files(stat.stdout)
+        # Step 2: infer modified files from the patch header lines
+        modified = _parse_modified_files(repaired)
 
         # Step 3: apply
         apply = subprocess.run(
-            ["git", "apply", patch_file],
+            ["patch", "-p1", "-l", "-F", "3", "-i", patch_file],
             cwd=str(root),
             capture_output=True,
             text=True,
@@ -120,6 +123,63 @@ def apply_patch(repo_root: str | Path, unified_diff: str) -> PatchResult:
         Path(patch_file).unlink(missing_ok=True)
 
 
+_HUNK_HEADER_RE = re.compile(r"^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@(.*)")
+
+
+def _repair_hunk_counts(diff: str) -> str:
+    """Recompute @@ hunk count headers from the actual diff body lines.
+
+    LLM-generated diffs frequently have correct +/- content but wrong line
+    counts in the @@ header. git apply treats a count mismatch as "corrupt
+    patch". This function recounts context, added, and removed lines in each
+    hunk body and rewrites the header to match.
+    """
+    lines = diff.split("\n")
+    out: list[str] = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        m = _HUNK_HEADER_RE.match(line)
+        if m:
+            old_start = int(m.group(1))
+            new_start = int(m.group(2))
+            tail = m.group(3)
+            # Collect hunk body lines
+            i += 1
+            hunk_lines: list[str] = []
+            while i < len(lines) and not lines[i].startswith("@@") and not lines[i].startswith("diff ") and not (lines[i].startswith("--- ") and i + 1 < len(lines) and lines[i + 1].startswith("+++ ")):
+                hunk_lines.append(lines[i])
+                i += 1
+            # Strip trailing blank lines (common LLM artifact)
+            while hunk_lines and hunk_lines[-1] == "":
+                hunk_lines.pop()
+            old_count = sum(1 for ln in hunk_lines if not ln.startswith("+"))
+            new_count = sum(1 for ln in hunk_lines if not ln.startswith("-"))
+            # Build repaired header
+            old_part = f"-{old_start}" if old_count == 1 else f"-{old_start},{old_count}"
+            new_part = f"+{new_start}" if new_count == 1 else f"+{new_start},{new_count}"
+            out.append(f"@@ {old_part} {new_part} @@{tail}")
+            out.extend(hunk_lines)
+        else:
+            out.append(line)
+            i += 1
+    return "\n".join(out) + "\n"
+
+
+def _parse_modified_files(diff: str) -> list[str]:
+    """Extract target file paths from unified diff +++ lines."""
+    files = []
+    for line in diff.splitlines():
+        if line.startswith("+++ "):
+            path = line[4:].strip()
+            # Strip a/ or b/ prefix from git-style paths
+            if path.startswith("b/"):
+                path = path[2:]
+            if path and path != "/dev/null":
+                files.append(path)
+    return files
+
+
 def _parse_stat_files(stat_output: str) -> list[str]:
     files = []
     for line in stat_output.splitlines():
@@ -129,3 +189,4 @@ def _parse_stat_files(stat_output: str) -> list[str]:
             if path:
                 files.append(path)
     return files
+

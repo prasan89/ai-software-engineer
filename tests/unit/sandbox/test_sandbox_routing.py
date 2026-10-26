@@ -26,6 +26,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from agent.providers.types import LLMResponse
 from agent.sandbox import SandboxResult
 from agent.sandbox.docker_executor import (
     DockerNotAvailableError,
@@ -72,7 +73,7 @@ class TestSandboxRouting:
             @property
             def info(self) -> ProviderInfo:
                 return ProviderInfo(name="fake", base_url="", auth_header="", docs_url="")
-            async def chat(self, request: LLMRequest) -> object:
+            async def chat(self, request: LLMRequest) -> LLMResponse:
                 raise RuntimeError("not called")
             def supports(self, capability: ModelCapability) -> bool:
                 return False
@@ -84,7 +85,7 @@ class TestSandboxRouting:
         orch = WorkflowOrchestrator(provider=_FakeProvider())
         calls: list[Path | str] = []
 
-        def _capture(repo_path: Path | str) -> SandboxResult:
+        def _capture(repo_path: Path | str, **kwargs: object) -> SandboxResult:
             calls.append(repo_path)
             return SandboxResult(
                 command=[], exit_code=0, stdout="Tests run: 1, Failures: 0, Errors: 0, Skipped: 0",
@@ -108,7 +109,7 @@ class TestSandboxRouting:
             @property
             def info(self) -> ProviderInfo:
                 return ProviderInfo(name="fake", base_url="", auth_header="", docs_url="")
-            async def chat(self, request: LLMRequest) -> object:
+            async def chat(self, request: LLMRequest) -> LLMResponse:
                 raise RuntimeError("not called")
             def supports(self, capability: ModelCapability) -> bool:
                 return False
@@ -128,7 +129,7 @@ class TestSandboxRouting:
 
         orch = WorkflowOrchestrator(
             provider=_FakeProvider(),
-            sandbox_runner=_injected_runner,  # type: ignore[arg-type]
+            sandbox_runner=_injected_runner,
         )
 
         docker_called: list[bool] = []
@@ -164,7 +165,7 @@ class TestDockerUnavailableFailsClosed:
             @property
             def info(self) -> ProviderInfo:
                 return ProviderInfo(name="fake", base_url="", auth_header="", docs_url="")
-            async def chat(self, request: LLMRequest) -> object:
+            async def chat(self, request: LLMRequest) -> LLMResponse:
                 raise RuntimeError("not called")
             def supports(self, capability: ModelCapability) -> bool:
                 return False
@@ -193,7 +194,7 @@ class TestDockerUnavailableFailsClosed:
             @property
             def info(self) -> ProviderInfo:
                 return ProviderInfo(name="fake", base_url="", auth_header="", docs_url="")
-            async def chat(self, request: LLMRequest) -> object:
+            async def chat(self, request: LLMRequest) -> LLMResponse:
                 raise RuntimeError("not called")
             def supports(self, capability: ModelCapability) -> bool:
                 return False
@@ -366,7 +367,7 @@ class TestPathTraversal:
             @property
             def info(self) -> ProviderInfo:
                 return ProviderInfo(name="fake", base_url="", auth_header="", docs_url="")
-            async def chat(self, request: LLMRequest) -> object:
+            async def chat(self, request: LLMRequest) -> LLMResponse:
                 raise RuntimeError
             def supports(self, capability: ModelCapability) -> bool:
                 return False

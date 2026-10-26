@@ -283,7 +283,7 @@ class TestMetaProviderLive:
         provider = MetaProvider(model=MUSE_SPARK_1_3)
         req = LLMRequest(
             messages=[Message(role=Role.user, content="Reply with the single word 'ok'.")],
-            max_tokens=10,
+            max_tokens=512,  # muse-spark-1.3 uses reasoning tokens; <200 often yields null content
         )
         response = await provider.chat(req)
 
@@ -314,7 +314,7 @@ class TestMetaProviderLive:
         provider = MetaProvider(model=MUSE_SPARK_1_3)
         req = LLMRequest(
             messages=[Message(role=Role.user, content="What is 1+1?")],
-            max_tokens=10,
+            max_tokens=512,  # muse-spark-1.3 uses reasoning tokens; <200 often yields null content
         )
         response = await provider.chat(req)
         # Field must exist and be a non-negative int
@@ -338,7 +338,7 @@ class TestMetaProviderLive:
         provider = MetaProvider(model=MUSE_SPARK_1_3)
         req = LLMRequest(
             messages=[Message(role=Role.user, content="Reply: 'yes'")],
-            max_tokens=5,
+            max_tokens=512,  # muse-spark-1.3 uses reasoning tokens; <200 often yields null content
         )
         response = await provider.chat(req)
         expected_cost = provider.estimated_cost_usd(

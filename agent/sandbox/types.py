@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import StrEnum
+from pathlib import Path
 
 
 class SandboxMode(StrEnum):
@@ -94,3 +95,8 @@ class SandboxConfig:
     # Run as this UID:GID inside the container (not root).
     # Alpine-based Maven images have uid 1000 (maven user) available.
     run_as_user: str = "1000:1000"
+
+    # Pre-seeded Maven local repository for offline builds (--network=none).
+    # When set, the directory is bind-mounted read-only at /tmp/.m2 inside the
+    # container and Maven is passed --offline. Required for full Docker runs.
+    maven_local_repo: Path | None = None

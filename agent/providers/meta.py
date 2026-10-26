@@ -259,6 +259,18 @@ def _message_to_dict(message: Message) -> dict[str, str]:
 
 def _parse_response(raw: dict[str, Any]) -> LLMResponse:
     choice = raw["choices"][0]
+    finish_reason = choice.get("finish_reason", "stop")
+    content = choice["message"]["content"]
+    # muse-spark-1.3 uses internal reasoning tokens; content can be None when
+    # max_tokens is too small to produce any output tokens beyond the reasoning
+    # budget. Raise a clear error rather than passing None into the typed model.
+    if content is None:
+        raise ProviderError(
+            f"Meta API returned null content (finish_reason={finish_reason!r}). "
+            "The model likely ran out of max_tokens before producing output — "
+            "increase max_tokens to at least 512 for muse-spark-1.3.",
+            status_code=200,
+        )
     usage_raw = raw.get("usage", {})
     # cached_tokens is nested under usage.prompt_tokens_details.cached_tokens
     # Verified: Meta API docs/cookbook/prompt-caching, retrieved 2026-10-26
@@ -270,9 +282,9 @@ def _parse_response(raw: dict[str, Any]) -> LLMResponse:
         cached_tokens=cached,
     )
     return LLMResponse(
-        content=choice["message"]["content"],
+        content=content,
         model=raw.get("model", ""),
         usage=usage,
-        finish_reason=choice.get("finish_reason", "stop"),
+        finish_reason=finish_reason,
         raw=raw,
     )
